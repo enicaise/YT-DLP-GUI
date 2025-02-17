@@ -5,6 +5,7 @@ import os
 import json
 import threading
 import requests
+import sys
 from io import BytesIO
 from PIL import Image, ImageTk, ImageDraw
 
@@ -22,6 +23,7 @@ translations = {
         "file_type": "File Type:",
         "extract_audio": "Extract Audio Only",
         "audio_format": "Audio Format:",
+        "safe_windows": "Safe for Windows",
         "quality": "Quality:",
         "subtitles": "Subtitles:",
         "download": "Download",
@@ -48,6 +50,7 @@ translations = {
         "file_type": "Type de fichier :",
         "extract_audio": "Extraire uniquement l'audio",
         "audio_format": "Format audio :",
+        "safe_windows": "Sûr pour Windows",
         "quality": "Qualité :",
         "subtitles": "Sous-titres :",
         "download": "Télécharger",
@@ -95,9 +98,17 @@ def add_rounded_border(im, radius=5, border=2, border_color="#000000"):
 # ---------------------------------
 # Configuration: Load and save config
 # ---------------------------------
+def get_app_path():
+    if getattr(sys, 'frozen', False):
+        # Running as a bundled executable
+        return os.path.dirname(sys.executable)
+    else:
+        # Running as a normal Python script
+        return os.path.dirname(os.path.abspath(__file__))
+
 def load_config():
     try:
-        config_path = os.path.join(os.path.dirname(os.path.abspath(__file__)), "config.json")
+        config_path = os.path.join(get_app_path(), "config.json")
         if os.path.exists(config_path):
             with open(config_path, "r", encoding="utf-8") as f:
                 config = json.load(f)
@@ -105,6 +116,7 @@ def load_config():
                 file_type_var.set(config.get("file_type", "mp4"))
                 extract_audio_var.set(config.get("extract_audio", False))
                 audio_format_var.set(config.get("audio_format", "mp3"))
+                safe_windows_var.set(config.get("safe_windows", False))
                 lang_code = config.get("language", "en")
                 language_var.set("Français" if lang_code == "fr" else "English")
     except Exception as e:
@@ -117,9 +129,10 @@ def save_config():
             "file_type": file_type_var.get(),
             "extract_audio": extract_audio_var.get(),
             "audio_format": audio_format_var.get(),
+            "safe_windows": safe_windows_var.get(),
             "language": get_lang_code()
         }
-        config_path = os.path.join(os.path.dirname(os.path.abspath(__file__)), "config.json")
+        config_path = os.path.join(get_app_path(), "config.json")
         with open(config_path, "w", encoding="utf-8") as f:
             json.dump(config, f, indent=4)
     except Exception as e:
@@ -142,6 +155,7 @@ def update_ui_language(*args):
     button_browse.config(text=t("browse"))
     label_file_type.config(text=t("file_type"))
     label_extract_audio.config(text=t("extract_audio"))
+    label_safe_windows.config(text=t("safe_windows"))
     label_audio_format.config(text=t("audio_format"))
     label_quality.config(text=t("quality"))
     label_subtitles.config(text=t("subtitles"))
@@ -175,7 +189,7 @@ def fetch_options():
     def worker():
         global quality_options_mapping, thumbnail_photo
         try:
-            # Prepare startupinfo and creationflags to hide the console
+            # Setup startupinfo and creationflags to hide console window
             if os.name == 'nt':
                 startupinfo = subprocess.STARTUPINFO()
                 startupinfo.dwFlags |= subprocess.STARTF_USESHOWWINDOW
@@ -275,9 +289,20 @@ def start_download():
             if quality_option != "Choisir" and " - " in quality_option and quality_option in quality_options_mapping:
                 fmt_info = quality_options_mapping[quality_option]
                 fmt_id = fmt_info.get("format_id", "")
-                if file_type_var.get() == "mp4" and fmt_info.get("acodec", "none") == "none":
-                    combined_format = f"{fmt_id}+bestaudio"
-                    cmd += ["-f", combined_format, "--merge-output-format", "mp4"]
+                if file_type_var.get() == "mp4":
+                    if safe_windows_var.get():
+                        # If safe for Windows is checked, re-encode to MP4
+                        if fmt_info.get("acodec", "none") == "none":
+                            combined_format = f"{fmt_id}+bestaudio"
+                            cmd += ["-f", combined_format, "--recode-video", "mp4"]
+                        else:
+                            cmd += ["-f", fmt_id, "--recode-video", "mp4"]
+                    else:
+                        if fmt_info.get("acodec", "none") == "none":
+                            combined_format = f"{fmt_id}+bestaudio"
+                            cmd += ["-f", combined_format, "--merge-output-format", "mp4"]
+                        else:
+                            cmd += ["-f", fmt_id]
                 else:
                     cmd += ["-f", fmt_id]
     if subtitle_option and subtitle_option.lower() != "choisir":
@@ -319,7 +344,7 @@ def toggle_audio_format():
 # ---------------------------
 root = tk.Tk()
 root.protocol("WM_DELETE_WINDOW", on_closing)
-root.geometry("1000x750")
+root.geometry("1000x800")
 
 # Configuration variables
 language_var = tk.StringVar(value="English")
@@ -330,6 +355,7 @@ quality_var = tk.StringVar(value="Choisir")
 subtitle_var = tk.StringVar(value="Choisir")
 extract_audio_var = tk.BooleanVar(value=False)
 audio_format_var = tk.StringVar(value="mp3")
+safe_windows_var = tk.BooleanVar(value=False)
 audio_formats = ["mp3", "aac", "flac", "wav", "m4a"]
 
 # --- Row 0: Language selection (spanning columns 0-1) ---
@@ -373,34 +399,40 @@ label_extract_audio.grid(row=4, column=0, padx=10, pady=5, sticky="w")
 checkbutton_extract_audio = tk.Checkbutton(root, text="", variable=extract_audio_var, command=toggle_audio_format)
 checkbutton_extract_audio.grid(row=4, column=1, padx=10, pady=5, sticky="w")
 
-# --- Row 5: Audio Format ---
+# --- Row 5: Safe for Windows ---
+label_safe_windows = tk.Label(root, text="")
+label_safe_windows.grid(row=5, column=0, padx=10, pady=5, sticky="w")
+checkbutton_safe_windows = tk.Checkbutton(root, text="", variable=safe_windows_var)
+checkbutton_safe_windows.grid(row=5, column=1, padx=10, pady=5, sticky="w")
+
+# --- Row 6: Audio Format ---
 label_audio_format = tk.Label(root, text="")
-label_audio_format.grid(row=5, column=0, padx=10, pady=5, sticky="w")
+label_audio_format.grid(row=6, column=0, padx=10, pady=5, sticky="w")
 audio_format_menu = tk.OptionMenu(root, audio_format_var, *audio_formats)
 audio_format_menu.config(width=10, state='disabled')
-audio_format_menu.grid(row=5, column=1, padx=10, pady=5, sticky="w")
+audio_format_menu.grid(row=6, column=1, padx=10, pady=5, sticky="w")
 
-# --- Row 6: Quality ---
+# --- Row 7: Quality ---
 label_quality = tk.Label(root, text="")
-label_quality.grid(row=6, column=0, padx=10, pady=5, sticky="w")
+label_quality.grid(row=7, column=0, padx=10, pady=5, sticky="w")
 quality_menu = tk.OptionMenu(root, quality_var, "Choisir")
 quality_menu.config(width=40)
-quality_menu.grid(row=6, column=1, padx=10, pady=5, sticky="w")
+quality_menu.grid(row=7, column=1, padx=10, pady=5, sticky="w")
 
-# --- Row 7: Subtitles ---
+# --- Row 8: Subtitles ---
 label_subtitles = tk.Label(root, text="")
-label_subtitles.grid(row=7, column=0, padx=10, pady=5, sticky="w")
+label_subtitles.grid(row=8, column=0, padx=10, pady=5, sticky="w")
 subtitle_menu = tk.OptionMenu(root, subtitle_var, "Choisir")
 subtitle_menu.config(width=40)
-subtitle_menu.grid(row=7, column=1, padx=10, pady=5, sticky="w")
+subtitle_menu.grid(row=8, column=1, padx=10, pady=5, sticky="w")
 
-# --- Row 8: Download button (centered across two columns) ---
+# --- Row 9: Download button (centered across two columns) ---
 button_download = tk.Button(root, text="", command=start_download, bg="#4CAF50", fg="white", width=20)
-button_download.grid(row=8, column=0, columnspan=2, pady=20)
+button_download.grid(row=9, column=0, columnspan=2, pady=20)
 
-# --- Row 9: Log text area (spanning two columns) ---
+# --- Row 10: Log text area (spanning two columns) ---
 text_area = scrolledtext.ScrolledText(root, wrap=tk.WORD, width=70, height=15)
-text_area.grid(row=9, column=0, columnspan=2, padx=10, pady=5)
+text_area.grid(row=10, column=0, columnspan=2, padx=10, pady=5)
 
 # --- Right Column (Column 3): Thumbnail ---
 thumbnail_label = tk.Label(root)
