@@ -7,3 +7,4 @@ An executable version of the GUI for Windows is available in the Release section
 
 You can build an executable using PyInstaller using the command: pyinstaller --onefile --windowed --icon=YouTubeDL.ICO YouTubeDL.py
 
+https://github.com/enicaise/YT-DLP-GUI/blob/main/YT-DLP-GUI-Screenshot-English.png
